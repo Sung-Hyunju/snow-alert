@@ -20,6 +20,24 @@ export default function DashboardPage() {
   const [selectedLoc, setSelectedLoc] = useState("loc_ddm1");
   const [inputSnow, setInputSnow] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  
+  //시계 타이머
+  useEffect(() => {
+    const updateClock = () => {
+      const now = new Date();
+      const year = now.getFullYear();
+      const month = String(now.getMonth() + 1).padStart(2, "0");
+      const day = String(now.getDate()).padStart(2, "0");
+      const hours = String(now.getHours()).padStart(2, "0");
+      const minutes = String(now.getMinutes()).padStart(2, "0");
+      const seconds = String(now.getSeconds()).padStart(2, "0");
+      setCurrentTime(`${year}-${month}-${day} ${hours}:${minutes}:${seconds}`);
+    };
+
+    updateClock(); // 켜지자마자 즉시 실행
+    const timer = setInterval(updateClock, 1000);
+    return () => clearInterval(timer);
+  }, []);
 
   // 스마트 자동 갱신 (5분 주기 + 탭 보고 있을 때만 동작)
   useEffect(() => {
