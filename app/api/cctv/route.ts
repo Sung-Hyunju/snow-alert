@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
       const url = `https://openapi.its.go.kr:9443/cctvInfo?apiKey=${apiKey}&type=${type}&cctvType=1&minX=${minX}&maxX=${maxX}&minY=${minY}&maxY=${maxY}&getType=json`;
       
       try {
-        const res = await fetch(url, { cache: "no-store" });
+        const res = await fetch(url, { next: { revalidate: 300 } });
         const json = await res.json();
 
         // ⚠️ ITS API 자체 에러 응답 체크 (결과코드가 99, 10 등인 경우)
