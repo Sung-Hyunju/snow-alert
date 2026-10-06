@@ -109,7 +109,7 @@ export async function GET(req: NextRequest) {
 
         const timeout = setTimeout(() => {
           controller.abort();
-        }, 15000);
+        }, 30000);
 
         const response = await fetch(workerUrl, {
           method: "POST",
