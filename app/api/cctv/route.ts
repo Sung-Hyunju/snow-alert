@@ -56,14 +56,43 @@ export async function GET(req: NextRequest) {
     const maxY = (targetLat + delta).toFixed(6);
 
     const fetchCctvByType = async (type: "ex" | "its") => {
-      const url = `https://openapi.its.go.kr:9443/cctvInfo?apiKey=${apiKey}&type=${type}&cctvType=1&minX=${minX}&maxX=${maxX}&minY=${minY}&maxY=${maxY}&getType=json`;
-      const res = await fetch(url, { cache: "no-store" });
-      if (!res.ok) return [];
-      const json = await res.json();
-      const rawData = json?.response?.data;
-      if (!rawData) return [];
-      return Array.isArray(rawData) ? rawData : [rawData];
-    };
+  const url =
+    `https://openapi.its.go.kr:9443/cctvInfo` +
+    `?apiKey=${encodeURIComponent(apiKey)}` +
+    `&type=${type}` +
+    `&cctvType=1` +
+    `&minX=${minX}` +
+    `&maxX=${maxX}` +
+    `&minY=${minY}` +
+    `&maxY=${maxY}` +
+    `&getType=json`;
+
+  try {
+    const res = await fetch(url, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10000),
+    });
+
+    if (!res.ok) {
+      console.error(`ITS ${type} HTTP 오류:`, res.status);
+      return [];
+    }
+
+    const json = await res.json();
+    const rawData = json?.response?.data;
+
+    if (!rawData) return [];
+
+    return Array.isArray(rawData) ? rawData : [rawData];
+  } catch (error: any) {
+    console.error(`ITS ${type} 호출 실패:`, {
+      message: error?.message,
+      cause: error?.cause,
+    });
+
+    return [];
+  }
+};
 
     const [exList, itsList] = await Promise.all([
       fetchCctvByType("ex"),
@@ -118,6 +147,23 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({ cctvs: uniqueList, source: "live" });
   } catch (error: any) {
-    return NextResponse.json({ error: error.message }, { status: 500 });
-  }
+  console.error("CCTV API 전체 오류:", error);
+  console.error("CCTV API error cause:", error?.cause);
+
+  return NextResponse.json(
+    {
+      error: error?.message || "알 수 없는 오류",
+      cause: error?.cause
+        ? {
+            code: error.cause.code,
+            message: error.cause.message,
+            errno: error.cause.errno,
+            syscall: error.cause.syscall,
+            hostname: error.cause.hostname,
+          }
+        : undefined,
+    },
+    { status: 500 }
+  );
+}
 }
