@@ -57,8 +57,7 @@ export async function GET(req: NextRequest) {
 
    const fetchCctvByType = async (type: "ex" | "its") => {
   const url =
-    `https://openapi.its.go.kr:9443/cctvInfo` +
-    `?apiKey=${encodeURIComponent(apiKey)}` +
+    `https://openapi.its.go.kr/cctvInfo?apiKey=${apiKey}` +
     `&type=${type}` +
     `&cctvType=1` +
     `&minX=${minX}` +
