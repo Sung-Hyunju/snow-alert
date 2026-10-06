@@ -1,4 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { Redis } from "@upstash/redis";
+
+// ⚠️ Next.js가 API 전체를 정적 캐시로 굳히지 못하도록 강제 동적 설정 (필수!)
+export const dynamic = "force-dynamic";
+
+let redis: Redis | null = null;
+if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+  redis = new Redis({
+    url: process.env.UPSTASH_REDIS_REST_URL,
+    token: process.env.UPSTASH_REDIS_REST_TOKEN,
+  });
+}
 
 export async function GET(req: NextRequest) {
   try {
@@ -7,25 +19,36 @@ export async function GET(req: NextRequest) {
     const lngStr = searchParams.get("lng");
 
     if (!latStr || !lngStr) {
-      return NextResponse.json({ error: "위도/경도 파라미터가 누락되었습니다." }, { status: 400 });
+      return NextResponse.json({ error: "위도와 경도 정보가 필요합니다." }, { status: 400 });
     }
 
     const targetLat = parseFloat(latStr);
     const targetLng = parseFloat(lngStr);
     const apiKey = process.env.ITS_API_KEY;
 
-    console.log("-----------------------------------------");
-    console.log("📍 [CCTV 요청] 위도:", targetLat, "경도:", targetLng);
-    console.log("🔑 [ITS 키 확인]:", apiKey ? `등록됨 (${apiKey.substring(0, 6)}...)` : "❌ 없음 (undefined)");
-
     if (!apiKey) {
       return NextResponse.json(
-        { error: "ITS_API_KEY가 없습니다. .env.local 작성 후 npm run dev를 재시작했는지 확인하세요." },
+        { error: "ITS_API_KEY 환경 변수가 설정되지 않았습니다." },
         { status: 500 }
       );
     }
 
-    // 검색 반경 약 12km (0.11도)로 넉넉히 설정
+    // 1. 지점 좌표별 고유 캐시 키 생성 (지점마다 캐시 분리)
+    const cacheKey = `cctv_${targetLat.toFixed(4)}_${targetLng.toFixed(4)}`;
+
+    // 2. Redis 캐시 확인 (해당 지점에 5분 이내 조회된 데이터가 있으면 반환)
+    if (redis) {
+      try {
+        const cached = await redis.get<any[]>(cacheKey);
+        if (cached && Array.isArray(cached) && cached.length > 0) {
+          return NextResponse.json({ cctvs: cached, source: "cache" });
+        }
+      } catch (cacheErr) {
+        console.warn("Redis 캐시 확인 실패, 실시간 호출로 진행:", cacheErr);
+      }
+    }
+
+    // 3. 캐시가 없을 때만 국가교통정보센터(ITS) 호출 (검색 반경 약 12km)
     const delta = 0.11;
     const minX = (targetLng - delta).toFixed(6);
     const maxX = (targetLng + delta).toFixed(6);
@@ -33,69 +56,43 @@ export async function GET(req: NextRequest) {
     const maxY = (targetLat + delta).toFixed(6);
 
     const fetchCctvByType = async (type: "ex" | "its") => {
-      // coordtype=1 (WGS84 좌표계 지정 필수)
       const url = `https://openapi.its.go.kr:9443/cctvInfo?apiKey=${apiKey}&type=${type}&cctvType=1&minX=${minX}&maxX=${maxX}&minY=${minY}&maxY=${maxY}&getType=json`;
-      
-      try {
-        const res = await fetch(url, { next: { revalidate: 300 } });
-        const json = await res.json();
-
-        // ⚠️ ITS API 자체 에러 응답 체크 (결과코드가 99, 10 등인 경우)
-        const header = json?.response?.header;
-        if (header && header.resultCode && header.resultCode !== "0" && header.resultCode !== "00") {
-          console.error(`🚨 [ITS ${type} 에러 응답]:`, header.resultMsg, `(코드: ${header.resultCode})`);
-          return { errorMsg: `[ITS API 오류] ${header.resultMsg} (코드: ${header.resultCode})` };
-        }
-
-        const rawData = json?.response?.data;
-        if (!rawData) return { list: [] };
-        return { list: Array.isArray(rawData) ? rawData : [rawData] };
-      } catch (err: any) {
-        console.error(`🚨 [ITS ${type} 네트워크/파싱 에러]:`, err.message);
-        return { errorMsg: `통신 에러: ${err.message}` };
-      }
+      const res = await fetch(url, { cache: "no-store" });
+      if (!res.ok) return [];
+      const json = await res.json();
+      const rawData = json?.response?.data;
+      if (!rawData) return [];
+      return Array.isArray(rawData) ? rawData : [rawData];
     };
 
-    // 고속도로(ex)와 일반국도(its) 동시 호출
-    const [exRes, itsRes] = await Promise.all([
+    const [exList, itsList] = await Promise.all([
       fetchCctvByType("ex"),
       fetchCctvByType("its"),
     ]);
 
-    // 두 요청 중 API 에러 메시지가 있다면 모달 화면에 그대로 노출
-    if (exRes.errorMsg || itsRes.errorMsg) {
-      const err = exRes.errorMsg || itsRes.errorMsg;
-      return NextResponse.json({ error: err }, { status: 400 });
-    }
-
-    const combined = [...(exRes.list || []), ...(itsRes.list || [])];
+    const combined = [...exList, ...itsList];
 
     if (combined.length === 0) {
       return NextResponse.json({ cctvs: [] });
     }
 
+    // 4. 거리 계산 및 정렬
     const withDistance = combined
       .filter((item: any) => item?.cctvurl && item?.coordy && item?.coordx)
       .map((item: any) => {
         const itemLat = parseFloat(item.coordy);
         const itemLng = parseFloat(item.coordx);
-
-        // 위경도 차이를 대략적인 km로 환산 (위도 1도 ≈ 111km, 경도 1도 ≈ 88km)
         const dLat = (itemLat - targetLat) * 111;
         const dLng = (itemLng - targetLng) * 88;
-        const distanceKm = Math.sqrt(dLat * dLat + dLng * dLng);
-
         return {
           name: item.cctvname,
           url: item.cctvurl,
-          distanceKm: distanceKm,
+          distanceKm: Math.sqrt(dLat * dLat + dLng * dLng),
         };
-      });
+      })
+      .sort((a, b) => a.distanceKm - b.distanceKm);
 
-    // 2. 가장 가까운 거리순으로 정렬
-    withDistance.sort((a, b) => a.distanceKm - b.distanceKm);
-
-    // 3. 중복 카메라명 제거 (상/하행선 등으로 이름이 겹치는 경우 방지)
+    // 5. 중복 카메라명 제거 및 최인접 5개 선별
     const uniqueList: any[] = [];
     const seenNames = new Set<string>();
 
@@ -107,13 +104,20 @@ export async function GET(req: NextRequest) {
           url: item.url,
         });
       }
-      // 👈 원하는 개수(예: 최인접 5개)만 채워지면 중단
       if (uniqueList.length >= 5) break;
     }
 
-    return NextResponse.json({ cctvs: uniqueList });
+    // 6. Redis에 해당 지점 결과만 5분(300초) 저장
+    if (redis && uniqueList.length > 0) {
+      try {
+        await redis.set(cacheKey, uniqueList, { ex: 300 });
+      } catch (saveErr) {
+        console.warn("Redis 캐시 저장 실패:", saveErr);
+      }
+    }
+
+    return NextResponse.json({ cctvs: uniqueList, source: "live" });
   } catch (error: any) {
-    console.error("서버 내부 예외:", error);
     return NextResponse.json({ error: error.message }, { status: 500 });
   }
 }

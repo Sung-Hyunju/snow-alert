@@ -28,7 +28,7 @@ export default function CctvModal({ locationName, lat, lng, onClose }: CctvModal
       setLoading(true);
       setErrorMsg("");
       try {
-        const res = await fetch(`/api/cctv?lat=${lat}&lng=${lng}`);
+        const res = await fetch(`/api/cctv?lat=${lat}&lng=${lng}`, { cache: "no-store" });
         const data = await res.json();
 
         if (!res.ok) {
