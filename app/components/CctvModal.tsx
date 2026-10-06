@@ -24,70 +24,33 @@ export default function CctvModal({ locationName, lat, lng, onClose }: CctvModal
   const hlsRef = useRef<Hls | null>(null);
 
   useEffect(() => {
-  async function loadCCTV() {
-    setLoading(true);
-    setErrorMsg("");
-    try {
-      const apiKey = process.env.ITS_API_KEY;
-      if (!apiKey) {
-        setErrorMsg("ITS_API_KEY가 설정되지 않았습니다.");
-        return;
+    async function loadCCTV() {
+      setLoading(true);
+      setErrorMsg("");
+      try {
+        // 브라우저에서 직접 키를 찾지 않고 우리 서버 API 라우트를 호출
+        const res = await fetch(`/api/cctv?lat=${lat}&lng=${lng}`, { cache: "no-store" });
+        const data = await res.json();
+
+        if (!res.ok) {
+          setErrorMsg(data.error || "CCTV 정보를 불러오지 못했습니다.");
+          return;
+        }
+
+        if (data.cctvs && data.cctvs.length > 0) {
+          setCctvList(data.cctvs);
+          setSelectedIdx(0);
+        } else {
+          setErrorMsg("해당 지점 인근 국가 도로망 CCTV 데이터가 없습니다.");
+        }
+      } catch (err: any) {
+        setErrorMsg(`네트워크 통신 오류: ${err.message}`);
+      } finally {
+        setLoading(false);
       }
-
-      const delta = 0.11;
-      const minX = (lng - delta).toFixed(6);
-      const maxX = (lng + delta).toFixed(6);
-      const minY = (lat - delta).toFixed(6);
-      const maxY = (lat + delta).toFixed(6);
-
-      const fetchCctv = async (type: "ex" | "its") => {
-        const res = await fetch(
-          `https://openapi.its.go.kr/cctvInfo?apiKey=${apiKey}&type=${type}&cctvType=1&minX=${minX}&maxX=${maxX}&minY=${minY}&maxY=${maxY}&getType=json`
-        );
-        if (!res.ok) return [];
-        const json = await res.json();
-        const raw = json?.response?.data;
-        return raw ? (Array.isArray(raw) ? raw : [raw]) : [];
-      };
-
-      const [exList, itsList] = await Promise.all([fetchCctv("ex"), fetchCctv("its")]);
-      const combined = [...exList, ...itsList];
-
-      if (combined.length === 0) {
-        setErrorMsg("인근 국가 도로망 CCTV 데이터가 없습니다.");
-        return;
-      }
-
-      // 거리순 정렬 후 상위 5개 추출
-      const formatted = combined
-        .filter((item: any) => item?.cctvurl && item?.coordy && item?.coordx)
-        .map((item: any) => {
-          const dLat = (parseFloat(item.coordy) - lat) * 111;
-          const dLng = (parseFloat(item.coordx) - lng) * 88;
-          return {
-            name: item.cctvname,
-            url: item.cctvurl,
-            distanceKm: Math.sqrt(dLat * dLat + dLng * dLng),
-          };
-        })
-        .sort((a, b) => a.distanceKm - b.distanceKm)
-        .slice(0, 5)
-        .map((item) => ({
-          name: `${item.name} (${item.distanceKm.toFixed(1)}km)`,
-          url: item.url,
-        }));
-
-      setCctvList(formatted);
-      setSelectedIdx(0);
-    } catch (err: any) {
-      setErrorMsg(`CCTV 연결 실패: ${err.message}`);
-    } finally {
-      setLoading(false);
     }
-  }
-
-  loadCCTV();
-}, [lat, lng]);
+    loadCCTV();
+  }, [lat, lng]);
 
   useEffect(() => {
     if (!cctvList[selectedIdx] || !videoRef.current) return;
