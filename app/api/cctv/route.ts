@@ -55,7 +55,7 @@ export async function GET(req: NextRequest) {
     const minY = (targetLat - delta).toFixed(6);
     const maxY = (targetLat + delta).toFixed(6);
 
-    const fetchCctvByType = async (type: "ex" | "its") => {
+   const fetchCctvByType = async (type: "ex" | "its") => {
   const url =
     `https://openapi.its.go.kr:9443/cctvInfo` +
     `?apiKey=${encodeURIComponent(apiKey)}` +
@@ -68,26 +68,40 @@ export async function GET(req: NextRequest) {
     `&getType=json`;
 
   try {
+    console.log(`[CCTV] ${type} 요청 시작`, url.replace(apiKey, "***"));
+
     const res = await fetch(url, {
       cache: "no-store",
       signal: AbortSignal.timeout(10000),
     });
 
+    console.log(`[CCTV] ${type} 응답`, res.status);
+
     if (!res.ok) {
-      console.error(`ITS ${type} HTTP 오류:`, res.status);
+      const text = await res.text();
+      console.error(`[CCTV] ${type} HTTP 오류`, res.status, text);
       return [];
     }
 
     const json = await res.json();
+
     const rawData = json?.response?.data;
 
-    if (!rawData) return [];
+    if (!rawData) {
+      console.warn(`[CCTV] ${type} 데이터 없음`, json);
+      return [];
+    }
 
     return Array.isArray(rawData) ? rawData : [rawData];
   } catch (error: any) {
-    console.error(`ITS ${type} 호출 실패:`, {
+    console.error(`[CCTV] ${type} FETCH 실패`, {
       message: error?.message,
+      name: error?.name,
       cause: error?.cause,
+      code: error?.cause?.code,
+      errno: error?.cause?.errno,
+      syscall: error?.cause?.syscall,
+      hostname: error?.cause?.hostname,
     });
 
     return [];
