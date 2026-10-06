@@ -48,8 +48,8 @@ export async function GET(req: NextRequest) {
       }
     }
 
-    // 3. 캐시가 없을 때만 국가교통정보센터(ITS) 호출 (검색 반경 약 12km)
-    const delta = 0.11;
+    // 3. 캐시가 없을 때만 국가교통정보센터(ITS) 호출 (검색 반경 약 3km)
+    const delta = 0.03;
     const minX = (targetLng - delta).toFixed(6);
     const maxX = (targetLng + delta).toFixed(6);
     const minY = (targetLat - delta).toFixed(6);
@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
 
     const res = await fetch(url, {
       cache: "no-store",
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(15000),
     });
 
     console.log(`[CCTV] ${type} 응답`, res.status);
