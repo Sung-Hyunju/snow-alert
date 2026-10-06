@@ -28,12 +28,11 @@ export default function CctvModal({ locationName, lat, lng, onClose }: CctvModal
       setLoading(true);
       setErrorMsg("");
       try {
-        // 브라우저에서 직접 키를 찾지 않고 우리 서버 API 라우트를 호출
-        const res = await fetch(`/api/cctv?lat=${lat}&lng=${lng}`, { cache: "no-store" });
+        const res = await fetch(`/api/cctv?lat=${lat}&lng=${lng}`);
         const data = await res.json();
 
         if (!res.ok) {
-          setErrorMsg(data.error || "CCTV 정보를 불러오지 못했습니다.");
+          setErrorMsg(data.error || `서버 에러 (${res.status})`);
           return;
         }
 
@@ -41,10 +40,10 @@ export default function CctvModal({ locationName, lat, lng, onClose }: CctvModal
           setCctvList(data.cctvs);
           setSelectedIdx(0);
         } else {
-          setErrorMsg("해당 지점 인근 국가 도로망 CCTV 데이터가 없습니다.");
+          setErrorMsg("해당 지점 인근(8km) 국가 도로망 CCTV 데이터가 없습니다.");
         }
       } catch (err: any) {
-        setErrorMsg(`네트워크 통신 오류: ${err.message}`);
+        setErrorMsg(`네트워크 연결 오류: ${err.message}`);
       } finally {
         setLoading(false);
       }

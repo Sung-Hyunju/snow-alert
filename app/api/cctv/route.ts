@@ -1,176 +1,112 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Redis } from "@upstash/redis";
 
+// ⚠️ Next.js가 API 전체를 정적 캐시로 굳히지 못하도록 강제 동적 설정 (필수!)
 export const dynamic = "force-dynamic";
-export const runtime = "nodejs";
 
 let redis: Redis | null = null;
-
-if (
-  process.env.UPSTASH_REDIS_REST_URL &&
-  process.env.UPSTASH_REDIS_REST_TOKEN
-) {
+if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
   redis = new Redis({
     url: process.env.UPSTASH_REDIS_REST_URL,
     token: process.env.UPSTASH_REDIS_REST_TOKEN,
   });
 }
 
-interface CctvRawItem {
-  cctvname?: string;
-  cctvurl?: string;
-  coordx?: string | number;
-  coordy?: string | number;
-}
-
-interface CctvItem {
-  name: string;
-  url: string;
-}
-
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
-
     const latStr = searchParams.get("lat");
     const lngStr = searchParams.get("lng");
 
     if (!latStr || !lngStr) {
-      return NextResponse.json(
-        { error: "위도와 경도 정보가 필요합니다." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "위도와 경도 정보가 필요합니다." }, { status: 400 });
     }
 
-    const targetLat = Number(latStr);
-    const targetLng = Number(lngStr);
+    const targetLat = parseFloat(latStr);
+    const targetLng = parseFloat(lngStr);
+    const apiKey = process.env.ITS_API_KEY;
 
-    if (!Number.isFinite(targetLat) || !Number.isFinite(targetLng)) {
+    if (!apiKey) {
       return NextResponse.json(
-        { error: "위도 또는 경도 값이 올바르지 않습니다." },
-        { status: 400 }
-      );
-    }
-
-    const workerUrl = process.env.CCTV_WORKER_URL;
-
-    if (!workerUrl) {
-      return NextResponse.json(
-        {
-          error:
-            "CCTV_WORKER_URL 환경 변수가 설정되지 않았습니다.",
-        },
+        { error: "ITS_API_KEY 환경 변수가 설정되지 않았습니다." },
         { status: 500 }
       );
     }
 
-    // --------------------------------------------------
-    // 1. 캐시
-    // --------------------------------------------------
-
+    // 1. 지점 좌표별 고유 캐시 키 생성 (지점마다 캐시 분리)
     const cacheKey = `cctv_${targetLat.toFixed(4)}_${targetLng.toFixed(4)}`;
 
+    // 2. Redis 캐시 확인 (해당 지점에 5분 이내 조회된 데이터가 있으면 반환)
     if (redis) {
       try {
-        const cached = await redis.get<CctvItem[]>(cacheKey);
-
+        const cached = await redis.get<any[]>(cacheKey);
         if (cached && Array.isArray(cached) && cached.length > 0) {
-          return NextResponse.json({
-            cctvs: cached,
-            source: "cache",
-          });
+          return NextResponse.json({ cctvs: cached, source: "cache" });
         }
-      } catch (error) {
-        console.warn("Redis 캐시 조회 실패:", error);
+      } catch (cacheErr) {
+        console.warn("Redis 캐시 확인 실패, 실시간 호출로 진행:", cacheErr);
       }
     }
 
-    // --------------------------------------------------
-    // 2. 검색 영역
-    //
-    // 처음부터 너무 큰 영역을 ITS에 요청하지 않고
-    // 약 ±0.03도 정도로 시작
-    // --------------------------------------------------
-
-    const delta = 0.03;
-
+    // 3. 캐시가 없을 때만 국가교통정보센터(ITS) 호출 (검색 반경 약 12km)
+    const delta = 0.11;
     const minX = (targetLng - delta).toFixed(6);
     const maxX = (targetLng + delta).toFixed(6);
     const minY = (targetLat - delta).toFixed(6);
     const maxY = (targetLat + delta).toFixed(6);
 
-    // --------------------------------------------------
-    // 3. Cloudflare Worker 호출
-    // --------------------------------------------------
+   const fetchCctvByType = async (type: "ex" | "its") => {
+  const url =
+    `https://openapi.its.go.kr:9443/cctvInfo` +
+    `?apiKey=${encodeURIComponent(apiKey)}` +
+    `&type=${type}` +
+    `&cctvType=1` +
+    `&minX=${minX}` +
+    `&maxX=${maxX}` +
+    `&minY=${minY}` +
+    `&maxY=${maxY}` +
+    `&getType=json`;
 
-    const fetchCctvByType = async (type: "ex" | "its") => {
-      try {
-        const controller = new AbortController();
+  try {
+    console.log(`[CCTV] ${type} 요청 시작`, url.replace(apiKey, "***"));
 
-        const timeout = setTimeout(() => {
-          controller.abort();
-        }, 30000);
+    const res = await fetch(url, {
+      cache: "no-store",
+      signal: AbortSignal.timeout(10000),
+    });
 
-        const response = await fetch(workerUrl, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            type,
-            minX,
-            maxX,
-            minY,
-            maxY,
-          }),
-          cache: "no-store",
-          signal: controller.signal,
-        });
+    console.log(`[CCTV] ${type} 응답`, res.status);
 
-        clearTimeout(timeout);
+    if (!res.ok) {
+      const text = await res.text();
+      console.error(`[CCTV] ${type} HTTP 오류`, res.status, text);
+      return [];
+    }
 
-        const text = await response.text();
+    const json = await res.json();
 
-        let json: any;
+    const rawData = json?.response?.data;
 
-        try {
-          json = JSON.parse(text);
-        } catch {
-          console.error("Worker가 JSON이 아닌 응답을 반환:", text);
+    if (!rawData) {
+      console.warn(`[CCTV] ${type} 데이터 없음`, json);
+      return [];
+    }
 
-          return [];
-        }
+    return Array.isArray(rawData) ? rawData : [rawData];
+  } catch (error: any) {
+    console.error(`[CCTV] ${type} FETCH 실패`, {
+      message: error?.message,
+      name: error?.name,
+      cause: error?.cause,
+      code: error?.cause?.code,
+      errno: error?.cause?.errno,
+      syscall: error?.cause?.syscall,
+      hostname: error?.cause?.hostname,
+    });
 
-        if (!response.ok) {
-          console.error("Worker CCTV 오류:", {
-            type,
-            status: response.status,
-            response: json,
-          });
-
-          return [];
-        }
-
-        if (!Array.isArray(json.data)) {
-          console.warn("Worker CCTV 데이터가 배열이 아님:", json);
-
-          return [];
-        }
-
-        return json.data as CctvRawItem[];
-      } catch (error: any) {
-        console.error(`Worker ${type} 호출 실패:`, {
-          message: error?.message,
-          name: error?.name,
-        });
-
-        return [];
-      }
-    };
-
-    // --------------------------------------------------
-    // 4. ex / its 독립적으로 호출
-    // --------------------------------------------------
+    return [];
+  }
+};
 
     const [exList, itsList] = await Promise.all([
       fetchCctvByType("ex"),
@@ -179,111 +115,69 @@ export async function GET(req: NextRequest) {
 
     const combined = [...exList, ...itsList];
 
-    // --------------------------------------------------
-    // 5. 거리 계산
-    // --------------------------------------------------
+    if (combined.length === 0) {
+      return NextResponse.json({ cctvs: [] });
+    }
 
+    // 4. 거리 계산 및 정렬
     const withDistance = combined
-      .filter(
-        (item) =>
-          item?.cctvurl &&
-          item?.coordx !== undefined &&
-          item?.coordy !== undefined
-      )
-      .map((item) => {
-        const itemLat = Number(item.coordy);
-        const itemLng = Number(item.coordx);
-
-        if (!Number.isFinite(itemLat) || !Number.isFinite(itemLng)) {
-          return null;
-        }
-
+      .filter((item: any) => item?.cctvurl && item?.coordy && item?.coordx)
+      .map((item: any) => {
+        const itemLat = parseFloat(item.coordy);
+        const itemLng = parseFloat(item.coordx);
         const dLat = (itemLat - targetLat) * 111;
         const dLng = (itemLng - targetLng) * 88;
-
-        const distanceKm = Math.sqrt(
-          dLat * dLat + dLng * dLng
-        );
-
         return {
-          name: item.cctvname || "이름 없는 CCTV",
-          url: item.cctvurl!,
-          distanceKm,
+          name: item.cctvname,
+          url: item.cctvurl,
+          distanceKm: Math.sqrt(dLat * dLat + dLng * dLng),
         };
       })
-      .filter(
-        (
-          item
-        ): item is {
-          name: string;
-          url: string;
-          distanceKm: number;
-        } => item !== null
-      )
       .sort((a, b) => a.distanceKm - b.distanceKm);
 
-    // --------------------------------------------------
-    // 6. CCTV 이름 중복 제거 + 가까운 5개
-    // --------------------------------------------------
-
-    const uniqueList: CctvItem[] = [];
+    // 5. 중복 카메라명 제거 및 최인접 5개 선별
+    const uniqueList: any[] = [];
     const seenNames = new Set<string>();
 
     for (const item of withDistance) {
-      if (seenNames.has(item.name)) {
-        continue;
+      if (!seenNames.has(item.name)) {
+        seenNames.add(item.name);
+        uniqueList.push({
+          name: `${item.name} (${item.distanceKm.toFixed(1)}km)`,
+          url: item.url,
+        });
       }
-
-      seenNames.add(item.name);
-
-      uniqueList.push({
-        name: `${item.name} (${item.distanceKm.toFixed(1)}km)`,
-        url: item.url,
-      });
-
-      if (uniqueList.length >= 5) {
-        break;
-      }
+      if (uniqueList.length >= 5) break;
     }
 
-    // --------------------------------------------------
-    // 7. Redis 캐시
-    // --------------------------------------------------
-
+    // 6. Redis에 해당 지점 결과만 5분(300초) 저장
     if (redis && uniqueList.length > 0) {
       try {
-        await redis.set(cacheKey, uniqueList, {
-          ex: 300,
-        });
-      } catch (error) {
-        console.warn("Redis 캐시 저장 실패:", error);
+        await redis.set(cacheKey, uniqueList, { ex: 300 });
+      } catch (saveErr) {
+        console.warn("Redis 캐시 저장 실패:", saveErr);
       }
     }
 
-    // --------------------------------------------------
-    // 8. 결과
-    // --------------------------------------------------
-
-    if (uniqueList.length === 0) {
-      return NextResponse.json({
-        cctvs: [],
-        source: "worker",
-        message: "주변 CCTV를 찾지 못했습니다.",
-      });
-    }
-
-    return NextResponse.json({
-      cctvs: uniqueList,
-      source: "worker",
-    });
+    return NextResponse.json({ cctvs: uniqueList, source: "live" });
   } catch (error: any) {
-    console.error("CCTV API 전체 오류:", error);
+  console.error("CCTV API 전체 오류:", error);
+  console.error("CCTV API error cause:", error?.cause);
 
-    return NextResponse.json(
-      {
-        error: error?.message || "CCTV API 오류",
-      },
-      { status: 500 }
-    );
-  }
+  return NextResponse.json(
+    {
+      error: error?.message || "알 수 없는 오류",
+      cause: error?.cause
+        ? {
+            code: error.cause.code,
+            message: error.cause.message,
+            errno: error.cause.errno,
+            syscall: error.cause.syscall,
+            hostname: error.cause.hostname,
+          }
+        : undefined,
+    },
+    { status: 500 }
+  );
+}
 }
