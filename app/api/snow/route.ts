@@ -11,12 +11,12 @@ const redis =
 
 // 6개 감시 지점
 export const LOCATIONS = [
-  { id: "loc_ddm1", name: "동대문 1 (동대문역)", nx: 60, ny: 127 },
-  { id: "loc_ddm2", name: "동대문 2 (용두/구청)", nx: 61, ny: 127 },
-  { id: "loc_jukjeon", name: "죽전", nx: 62, ny: 122 },
-  { id: "loc_geumgok", name: "금곡 (남양주)", nx: 64, ny: 128 },
-  { id: "loc_yongmun", name: "용문 (양평)", nx: 71, ny: 125 },
-  { id: "loc_bubal", name: "부발 (이천)", nx: 68, ny: 121 },
+  { id: "depot_imun", name: "이문차량사업소", nx: 61, ny: 128, lat: 37.5998, lng: 127.0685 },
+  { id: "depot_cheongnyangni", name: "청량리차량사업소", nx: 61, ny: 127, lat: 37.5815, lng: 127.0543 },
+  { id: "depot_bundang", name: "분당차량사업소", nx: 62, ny: 122, lat: 37.3134, lng: 127.1062 },
+  { id: "depot_pyeongnae", name: "평내차량사업소", nx: 64, ny: 128, lat: 37.6432, lng: 127.2405 },
+  { id: "depot_yongmun", name: "용문차량사업소", nx: 71, ny: 125, lat: 37.5147, lng: 127.5701 },
+  { id: "depot_bubal", name: "부발차량사업소", nx: 68, ny: 121, lat: 37.2652, lng: 127.5028 },
 ];
 
 function getKstBaseDateTime() {
@@ -156,6 +156,8 @@ export async function GET() {
         return {
           id: loc.id,
           name: loc.name,
+          lat: loc.lat,
+          lng: loc.lng,
           currentSnow: record.currentSnow,
           updatedAt: record.updatedAt,
           currentWeather,

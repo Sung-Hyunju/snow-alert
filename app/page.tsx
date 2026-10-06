@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+
 import {
   AlertTriangle,
   CheckCircle,
@@ -11,6 +12,7 @@ import {
   Thermometer,
   Clock,
 } from "lucide-react";
+import CctvModal from "./components/CctvModal";
 
 export default function DashboardPage() {
   const [data, setData] = useState<any>(null);
@@ -20,6 +22,8 @@ export default function DashboardPage() {
   const [selectedLoc, setSelectedLoc] = useState("loc_ddm1");
   const [inputSnow, setInputSnow] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  const [activeCctv, setActiveCctv] = useState<{ name: string; lat: number; lng: number } | null>(null);
   
   //시계 타이머
   useEffect(() => {
@@ -211,6 +215,13 @@ export default function DashboardPage() {
                   <h2 className="text-base font-bold text-white tracking-tight">{loc.name}</h2>
                   <p className="text-[11px] text-slate-400">마지막 실측: {loc.updatedAt}</p>
                 </div>
+                <button
+                  type="button"
+                  onClick={() => setActiveCctv({ name: loc.name, lat: loc.lat, lng: loc.lng })}
+                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] text-blue-400 font-medium transition cursor-pointer"
+                >
+                  근처 CCTV 보기
+                </button>
                 <span
                   className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
                     loc.isDanger
@@ -326,6 +337,14 @@ export default function DashboardPage() {
           </form>
         </div>
       </section>
+      {activeCctv && (
+  <CctvModal
+    locationName={activeCctv.name}
+    lat={activeCctv.lat}
+    lng={activeCctv.lng}
+    onClose={() => setActiveCctv(null)}
+  />
+)}
     </main>
   );
 }
