@@ -215,13 +215,13 @@ export default function DashboardPage() {
                   <h2 className="text-base font-bold text-white tracking-tight">{loc.name}</h2>
                   <p className="text-[11px] text-slate-400">마지막 실측: {loc.updatedAt}</p>
                 </div>
-                <button
+                {/* <button
                   type="button"
                   onClick={() => setActiveCctv({ name: loc.name, lat: loc.lat, lng: loc.lng })}
                   className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-slate-700 text-[11px] text-blue-400 font-medium transition cursor-pointer"
                 >
                   근처 CCTV 보기
-                </button>
+                </button> */}
                 <span
                   className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
                     loc.isDanger
