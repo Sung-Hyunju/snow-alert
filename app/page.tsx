@@ -19,7 +19,7 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true);
   const [currentTime, setCurrentTime] = useState<string>("");
 
-  const [selectedLoc, setSelectedLoc] = useState("loc_ddm1");
+ const [selectedLoc, setSelectedLoc] = useState("depot_imun");
   const [inputSnow, setInputSnow] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
